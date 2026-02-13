@@ -1,8 +1,8 @@
 # Shellclaw
 
-An implementation of [OpenClaw](https://github.com/opensouls/openclaw) built from Unix primitives, following the [Its Just Shell](https://itsjustshell.com) thesis.
+A minimal implementation of [OpenClaw](https://github.com/opensouls/openclaw) built from Unix primitives, following the [Its Just Shell](https://itsjustshell.com) thesis.
 
-Shellclaw is not a framework. It's a set of composable shell libraries that demonstrate how to build agent systems using processes, files, text streams, and exit codes — the primitives Unix already provides. The libraries are the deliverable. People source them and compose their own architectures.
+A set of composable shell libraries that demonstrate how to build agent systems using processes, files, text streams, and exit codes — the primitives Unix already provides. The libraries are the deliverable. People source them and compose their own architectures.
 
 ## Structure
 
