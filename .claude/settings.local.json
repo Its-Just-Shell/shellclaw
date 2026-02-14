@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(shellcheck:*)",
-      "Bash(bash:*)"
+      "Bash(bash:*)",
+      "Bash(gh repo create:*)"
     ]
   }
 }

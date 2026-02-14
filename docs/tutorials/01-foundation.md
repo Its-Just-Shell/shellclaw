@@ -1,6 +1,8 @@
-# Shellclaw: How It Works
+# Tutorial 1: Foundation — Config and Logging
 
-What exists so far (Phase 1): `lib/log.sh`, `lib/config.sh`, config files, and a test suite. This document explains what each piece does and the shell concepts behind them.
+This tutorial covers the two libraries with no dependencies: `lib/config.sh` and `lib/log.sh`. These are the ground floor — everything else builds on them.
+
+> Files covered: [`lib/config.sh`](../../lib/config.sh), [`lib/log.sh`](../../lib/log.sh), [`config/shellclaw.env`](../../config/shellclaw.env), [`config/agents.json`](../../config/agents.json)
 
 ---
 
@@ -14,7 +16,7 @@ This only affects the current shell process. Another terminal tab doesn't see th
 
 ### Environment Variables
 
-Shell functions don't have objects or return values in the traditional sense. The way you share state between functions in shell is through variables. When `config_init` sets `SHELLCLAW_MODEL`, later when `llm_call` (Phase 3) needs to know which model to use, it reads `$SHELLCLAW_MODEL`. Shared variables in the same shell process are how the pieces talk to each other.
+Shell functions don't have objects or return values in the traditional sense. The way you share state between functions in shell is through variables. When `config_init` sets `SHELLCLAW_MODEL`, later when `llm_call` needs to know which model to use, it reads `$SHELLCLAW_MODEL`. Shared variables in the same shell process are how the pieces talk to each other.
 
 ### `export`
 
@@ -33,9 +35,7 @@ JSONL is one JSON object per line. Each line is independently parseable. You can
 
 ---
 
-## What Exists (Phase 1)
-
-### `lib/config.sh`
+## `lib/config.sh`
 
 Exposes three functions: `config_init`, `config_get`, `config_agent`.
 
@@ -73,7 +73,7 @@ Reads `config/agents.json` using `jq`. The JSON file maps agent names to their s
 
 Why a separate JSON file instead of more env vars? Because agents are structured — each one has multiple fields (soul path, model override, potentially more). A flat env file doesn't express that well. JSON does.
 
-### `config/shellclaw.env`
+## `config/shellclaw.env`
 
 The values that `config_init` loads:
 
@@ -86,7 +86,7 @@ SHELLCLAW_LLM_BACKEND="llm"                     # "llm" for real calls, "stub" f
 
 This file is sourced directly (executed as bash), not parsed. Only variable assignments belong in it.
 
-### `lib/log.sh`
+## `lib/log.sh`
 
 Exposes one function: `log_event`.
 
@@ -102,7 +102,7 @@ Reads two environment variables:
 - `LOG_FILE` — where to write (required, fails without it)
 - `SHELLCLAW_AGENT_ID` — stamped into every entry so you can tell which agent produced it (defaults to "unknown")
 
-### `config/agents.json`
+## `config/agents.json`
 
 Maps agent names to their settings. Currently just the default agent:
 
@@ -119,24 +119,17 @@ Maps agent names to their settings. Currently just the default agent:
 
 ---
 
-## Putting It Together
+## Try It
 
 ```bash
-# Load the libraries into this shell process
-source lib/config.sh
+source lib/config.sh && config_init "$PWD"
 source lib/log.sh
 
-# Tell shellclaw where its files live, load config values
-config_init "$PWD"
-
-# Set up logging
-export LOG_FILE="agents/default/agent.jsonl"
+export LOG_FILE="/tmp/shellclaw-tutorial.jsonl"
 export SHELLCLAW_AGENT_ID="default"
 
-# Now you can use the functions
-config_get "SHELLCLAW_MODEL"          # prints: claude-sonnet-4-5-20250929
-config_agent "default" "soul"         # prints: agents/default/soul.md
-log_event "session_start" "ready"     # appends JSON to agent.jsonl
+config_get "SHELLCLAW_MODEL"        # prints the model name
+config_agent "default" "soul"       # prints the soul file path
+log_event "tutorial_start" "Hello from tutorial 1"
+cat /tmp/shellclaw-tutorial.jsonl | jq .
 ```
-
-This is all plumbing. No LLM calls yet — that comes in Phase 3 (`llm.sh`). No session management — that comes in Phase 2 (`session.sh`). What Phase 1 provides is the wiring: where are things, what's configured, and a way to log what happens.

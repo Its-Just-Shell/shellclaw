@@ -1,0 +1,364 @@
+#!/usr/bin/env bash
+# shellclaw — Composable LLM primitives for the Unix shell
+#
+# A thin entry point that composes the library functions.
+# Text in, text out. Your shell is the interface.
+#
+# Usage:
+#   shellclaw "What is 2+2?"                          # message as argument
+#   echo "What is 2+2?" | shellclaw                   # stdin as message
+#   cat error.log | shellclaw -s "What's failing?"    # piped input + system prompt
+#   shellclaw -c "What did I just say?"               # continue conversation
+#   shellclaw init                                     # create directory structure
+#   shellclaw config                                   # print resolved config
+#   shellclaw session                                  # show conversation history
+#   shellclaw reset                                    # clear session, start fresh
+#   shellclaw help                                     # show usage
+set -euo pipefail
+
+# --- Locate shellclaw home ---
+# BASH_SOURCE[0] is the path to this script, even when sourced or symlinked.
+# We resolve it to find SHELLCLAW_HOME — the root directory where config/,
+# agents/, and lib/ all live.
+
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+# Follow symlinks: if this script is a symlink, resolve to the real file.
+# -L tests "is this a symbolic link?"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    # If readlink returns a relative path, make it absolute
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SHELLCLAW_HOME="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# --- Source libraries ---
+# source executes each file in the current shell, making their functions available.
+# Order matters: config first (other libs may read config values).
+
+source "$SHELLCLAW_HOME/lib/config.sh"
+source "$SHELLCLAW_HOME/lib/log.sh"
+source "$SHELLCLAW_HOME/lib/session.sh"
+source "$SHELLCLAW_HOME/lib/llm.sh"
+source "$SHELLCLAW_HOME/lib/compose.sh"
+
+# --- Initialize config ---
+# This sources shellclaw.env and sets defaults for SHELLCLAW_MODEL, etc.
+config_init "$SHELLCLAW_HOME"
+
+# --- Help text ---
+
+_shellclaw_usage() {
+    cat <<'USAGE'
+shellclaw — Composable LLM primitives for the Unix shell
+
+Usage:
+  shellclaw <message>                   Send a message to the LLM
+  echo <text> | shellclaw               Pipe text as the message
+  shellclaw -c <message>                Continue previous conversation
+
+Flags:
+  -s <prompt>     System prompt (string or path to file)
+  -m <model>      Model override
+  --agent <id>    Use a specific agent's soul and config
+  -c              Continue previous conversation (multi-turn)
+
+Subcommands:
+  shellclaw init       Create directory structure and default config
+  shellclaw config     Print resolved configuration
+  shellclaw session    Show conversation history
+  shellclaw reset      Clear session, start fresh
+  shellclaw help       Show this message
+
+Examples:
+  shellclaw "What is 2+2?"
+  echo "Summarize this" | shellclaw
+  cat error.log | shellclaw -s "What service is failing?"
+  shellclaw -c "What did I just say?"
+
+  # Interactive chat loop (your shell is the REPL):
+  while read -r -e -p "> " msg; do shellclaw -c "$msg"; done
+USAGE
+}
+
+# --- Subcommand: init ---
+# Creates the directory structure for a new shellclaw project.
+
+_shellclaw_init() {
+    local home="${SHELLCLAW_HOME}"
+    local agent_id="${SHELLCLAW_DEFAULT_AGENT:-default}"
+    local agent_dir="$home/agents/$agent_id"
+
+    # mkdir -p creates directories and all parents; no error if they exist.
+    mkdir -p "$agent_dir/sessions"
+    mkdir -p "$home/config"
+
+    # Create default config files if they don't exist.
+    # [[ ! -f ... ]] tests "does this file NOT exist?"
+    if [[ ! -f "$home/config/shellclaw.env" ]]; then
+        cat > "$home/config/shellclaw.env" <<'ENV'
+# shellcheck shell=bash
+# Shellclaw configuration
+# shellcheck disable=SC2034
+SHELLCLAW_MODEL="claude-sonnet-4-5-20250929"
+SHELLCLAW_DEFAULT_AGENT="default"
+SHELLCLAW_TOOL_BACKEND="bash"
+SHELLCLAW_LLM_BACKEND="llm"
+ENV
+    fi
+
+    if [[ ! -f "$home/config/agents.json" ]]; then
+        cat > "$home/config/agents.json" <<'JSON'
+{
+  "default": {
+    "soul": "agents/default/soul.md",
+    "model": null
+  }
+}
+JSON
+    fi
+
+    if [[ ! -f "$agent_dir/soul.md" ]]; then
+        cat > "$agent_dir/soul.md" <<'SOUL'
+You are a helpful assistant running inside shellclaw, a composable LLM system built from Unix primitives.
+
+You communicate clearly and concisely. When asked about yourself, you explain that you're a demonstration of the "Its Just Shell" thesis — that modern AI agent systems can be built from standard Unix tools, shell scripts, and composable primitives.
+
+You are text in, text out. You work in pipelines.
+SOUL
+    fi
+
+    echo "Initialized shellclaw at $home"
+}
+
+# --- Subcommand: config ---
+# Prints the resolved configuration values.
+
+_shellclaw_config() {
+    echo "SHELLCLAW_HOME=$SHELLCLAW_HOME"
+    echo "SHELLCLAW_MODEL=$(config_get SHELLCLAW_MODEL)"
+    echo "SHELLCLAW_DEFAULT_AGENT=$(config_get SHELLCLAW_DEFAULT_AGENT)"
+    echo "SHELLCLAW_TOOL_BACKEND=$(config_get SHELLCLAW_TOOL_BACKEND)"
+    echo "SHELLCLAW_LLM_BACKEND=$(config_get SHELLCLAW_LLM_BACKEND)"
+}
+
+# --- Subcommand: session ---
+# Shows the current conversation history for an agent.
+
+_shellclaw_session() {
+    local agent_id="$1"
+    local session_file="$SHELLCLAW_HOME/agents/$agent_id/sessions/current.jsonl"
+
+    if [[ ! -f "$session_file" || ! -s "$session_file" ]]; then
+        echo "No conversation history for agent '$agent_id'."
+        return 0
+    fi
+
+    session_load "$session_file"
+}
+
+# --- Subcommand: reset ---
+# Clears the current session and starts fresh.
+
+_shellclaw_reset() {
+    local agent_id="$1"
+    local session_file="$SHELLCLAW_HOME/agents/$agent_id/sessions/current.jsonl"
+
+    session_clear "$session_file"
+    echo "Session cleared for agent '$agent_id'."
+}
+
+# --- Main: parse arguments and dispatch ---
+
+main() {
+    local message=""
+    local system_prompt=""
+    local model=""
+    local agent_id=""
+    local continue_flag=false
+
+    # No arguments and terminal stdin — show help.
+    # [[ -t 0 ]] tests "is file descriptor 0 (stdin) a terminal?"
+    # If stdin is a pipe, -t 0 returns false. If it's a keyboard, true.
+    if [[ $# -eq 0 && -t 0 ]]; then
+        _shellclaw_usage
+        return 0
+    fi
+
+    # Check for subcommands first (they don't take flags).
+    # Subcommands are the first argument and stand alone.
+    if [[ $# -gt 0 ]]; then
+        case "$1" in
+            init)
+                _shellclaw_init
+                return 0
+                ;;
+            config)
+                _shellclaw_config
+                return 0
+                ;;
+            help|--help|-h)
+                _shellclaw_usage
+                return 0
+                ;;
+            session)
+                # session and reset accept --agent as a second arg pattern,
+                # but for simplicity use the default agent.
+                agent_id="${SHELLCLAW_DEFAULT_AGENT:-default}"
+                _shellclaw_session "$agent_id"
+                return 0
+                ;;
+            reset)
+                agent_id="${SHELLCLAW_DEFAULT_AGENT:-default}"
+                _shellclaw_reset "$agent_id"
+                return 0
+                ;;
+        esac
+    fi
+
+    # --- Parse flags for filter mode ---
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -s)
+                system_prompt="${2:-}"
+                if [[ -z "$system_prompt" ]]; then
+                    echo "shellclaw: -s requires a system prompt" >&2
+                    return 1
+                fi
+                shift 2
+                ;;
+            -m)
+                model="${2:-}"
+                if [[ -z "$model" ]]; then
+                    echo "shellclaw: -m requires a model name" >&2
+                    return 1
+                fi
+                shift 2
+                ;;
+            --agent)
+                agent_id="${2:-}"
+                if [[ -z "$agent_id" ]]; then
+                    echo "shellclaw: --agent requires an agent ID" >&2
+                    return 1
+                fi
+                shift 2
+                ;;
+            -c)
+                continue_flag=true
+                shift
+                ;;
+            -*)
+                echo "shellclaw: unknown flag: $1" >&2
+                echo "Run 'shellclaw help' for usage." >&2
+                return 1
+                ;;
+            *)
+                # Positional argument = the message
+                if [[ -z "$message" ]]; then
+                    message="$1"
+                else
+                    echo "shellclaw: unexpected argument: $1" >&2
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # --- Resolve agent ---
+    # Default to the configured default agent if none specified via --agent.
+    agent_id="${agent_id:-${SHELLCLAW_DEFAULT_AGENT:-default}}"
+    local agent_dir="$SHELLCLAW_HOME/agents/$agent_id"
+
+    if [[ ! -d "$agent_dir" ]]; then
+        echo "shellclaw: agent directory not found: $agent_dir" >&2
+        return 1
+    fi
+
+    # --- Set up logging and session paths ---
+    export SHELLCLAW_AGENT_ID="$agent_id"
+    export LOG_FILE="$SHELLCLAW_HOME/agents/$agent_id/agent.jsonl"
+    local session_file="$SHELLCLAW_HOME/agents/$agent_id/sessions/current.jsonl"
+
+    # Ensure session directory exists
+    mkdir -p "$(dirname "$session_file")"
+
+    # --- Read message from stdin if not given as argument ---
+    # [[ -t 0 ]] is false when stdin is a pipe (data is being piped in).
+    if [[ -z "$message" ]]; then
+        if [[ ! -t 0 ]]; then
+            # Read all of stdin into the message variable.
+            # IFS= prevents trimming leading/trailing whitespace.
+            # -r prevents backslash interpretation.
+            # -d '' reads until EOF (not just one line).
+            IFS= read -r -d '' message || true
+        fi
+    fi
+
+    if [[ -z "$message" ]]; then
+        echo "shellclaw: no message provided" >&2
+        echo "Run 'shellclaw help' for usage." >&2
+        return 1
+    fi
+
+    # --- Compose system prompt ---
+    # If -s was given, use it directly (it could be a string or a file path).
+    # Otherwise, read the agent's soul.md via compose_system.
+    if [[ -n "$system_prompt" ]]; then
+        # If the -s value is a file path that exists, read it.
+        # Otherwise treat it as a literal prompt string.
+        if [[ -f "$system_prompt" ]]; then
+            system_prompt=$(cat "$system_prompt")
+        fi
+    else
+        # No -s flag — use the agent's soul file.
+        system_prompt=$(compose_system "$agent_dir")
+    fi
+
+    # --- Resolve model ---
+    # Priority: -m flag > agent config > global config.
+    if [[ -z "$model" ]]; then
+        local agent_model
+        agent_model=$(config_agent "$agent_id" "model")
+        if [[ -n "$agent_model" ]]; then
+            model="$agent_model"
+        fi
+        # If still empty, llm_call falls back to $SHELLCLAW_MODEL
+    fi
+
+    # --- Make the LLM call ---
+    log_event "user_input" "$message"
+    session_append "$session_file" "user" "$message"
+
+    # Build llm_call arguments
+    local llm_args=("$message")
+    if [[ -n "$system_prompt" ]]; then
+        llm_args+=(--system "$system_prompt")
+    fi
+    if [[ -n "$model" ]]; then
+        llm_args+=(--model "$model")
+    fi
+    if [[ "$continue_flag" == "true" ]]; then
+        llm_args+=(--continue)
+    fi
+
+    local response
+    response=$(llm_call "${llm_args[@]}")
+    local rc=$?
+
+    if [[ $rc -ne 0 ]]; then
+        log_event "llm_error" "$response"
+        echo "shellclaw: LLM call failed" >&2
+        return 1
+    fi
+
+    log_event "llm_response" "$response"
+    session_append "$session_file" "assistant" "$response"
+
+    # --- Output ---
+    # Print the response to stdout. This is the filter output —
+    # it goes to the terminal, or into the next pipe.
+    printf '%s\n' "$response"
+}
+
+main "$@"
