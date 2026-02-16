@@ -315,13 +315,13 @@ All three backends implement the same interface:
 
 tool_loop <user_message> <system_prompt> <tools_json_path> [max_iterations]
 # Runs the request → dispatch → feedback loop
-# Dispatches tool calls to skill executables in $SHELLCLAW_SKILLS_DIR
+# Dispatches tool calls to tool executables in $SHELLCLAW_TOOLS_DIR
 # Returns final text response on stdout
 # Logs every iteration to $LOG_FILE
 # Exit: 0=success, 1=error, 2=max_iterations_reached
 ```
 
-Skills are always shell scripts (executables with `--describe` for schema). The tool-calling backend only affects how the LLM interaction and JSON parsing work — the actual tool execution is always shell.
+Tools are self-describing executables (with `--describe` for schema). The tool-calling backend only affects how the LLM interaction and JSON parsing work — the actual tool execution is always shell. See `docs/TOOL_INTERFACE.md` for the full tool interface specification.
 
 ### Backend 1: Pure Bash (`lib/tool_loop/bash/tool_loop.sh`)
 
@@ -337,18 +337,18 @@ echo "$msg" + tools.json ──► curl to Anthropic API
               validate against   return text
               allowlist              │
                     │               done
-              execute skill.sh
+              execute tool
                     │
               feed result back ──► next API call
 ```
 
 - Direct `curl` to Anthropic API with `tools` array in request body
 - Parse `tool_use` content blocks with `jq`
-- Dispatch via case statement to skill executables
+- Dispatch via case statement to tool executables
 - Accumulate messages in temp JSONL file
 - **Strengths**: Zero dependencies beyond curl/jq, total transparency
 - **Weaknesses**: Multi-line text quoting fragile, nested JSON in tool args is pain point
-- **Test**: Skills with simple string args, verify dispatch and result feeding
+- **Test**: Tools with simple string args, verify dispatch and result feeding
 
 ### Backend 2: `llm` CLI (`lib/tool_loop/llm_cli/tool_loop.sh`)
 
@@ -358,7 +358,7 @@ echo "$msg" ──► llm --tools tools.json -s "$prompt" -m "$model"
                    llm handles: API call, response parsing,
                    tool-call detection, result formatting
                          │
-                   tool execution callback ──► skill.sh
+                   tool execution callback ──► tool.sh
                          │
                    llm feeds result, continues loop
                          │
@@ -367,10 +367,10 @@ echo "$msg" ──► llm --tools tools.json -s "$prompt" -m "$model"
 
 - Uses `llm --tools` for tool definitions
 - `llm` handles the multi-turn tool-calling protocol internally
-- We provide tool execution callbacks (skill scripts)
+- We provide tool execution callbacks (tool scripts)
 - **Strengths**: Battle-tested API handling, streaming, multi-provider
 - **Weaknesses**: Less control over exact request, tool-calling support maturity TBD
-- **Test**: Same skills as bash backend, verify identical dispatch behavior
+- **Test**: Same tools as bash backend, verify identical dispatch behavior
 
 ### Backend 3: Elixir Data Plane (`lib/tool_loop/elixir/`)
 
@@ -383,7 +383,7 @@ echo "$msg" ──► shellclaw-tool-loop (escript)
                    - Tool-call extraction (structured)
                    - Multi-turn context (process state)
                          │
-                   {:tool_call, name, args} ──► System.cmd("skill.sh", args)
+                   {:tool_call, name, args} ──► System.cmd("tool.sh", args)
                          │
                    {:text, content} ──► stdout
 ```
@@ -397,14 +397,14 @@ The Elixir component is a **standalone escript** — a self-contained executable
 response=$(echo "$msg" | ./lib/tool_loop/elixir/shellclaw-tool-loop \
   --system "$prompt" \
   --tools tools.json \
-  --skills-dir "$SHELLCLAW_SKILLS_DIR" \
+  --tools-dir "$SHELLCLAW_TOOLS_DIR" \
   --log-file "$LOG_FILE")
 ```
 
 The escript:
 - Reads config from files (same files shell reads)
 - Writes logs to JSONL (same format as bash backends)
-- Calls skill scripts as subprocesses (same skills, same `--describe` interface)
+- Calls tool scripts as subprocesses (same tools, same `--describe` interface)
 - Returns final text on stdout
 
 From the operator's perspective, nothing changes — `cat`, `grep`, `jq` all work the same on the logs and session files. The Elixir layer is invisible to the workflow.
@@ -416,7 +416,7 @@ From the operator's perspective, nothing changes — `cat`, `grep`, `jq` all wor
 defp handle_response(%{"content" => blocks}) do
   Enum.reduce(blocks, [], fn
     %{"type" => "tool_use", "name" => name, "input" => args}, acc ->
-      result = dispatch_tool(name, args)  # shells out to skill script
+      result = dispatch_tool(name, args)  # shells out to tool script
       [{:tool_result, name, result} | acc]
 
     %{"type" => "text", "text" => text}, acc ->
@@ -441,7 +441,7 @@ lib/tool_loop/elixir/
 │   │   ├── agent_server.ex     # GenServer per agent
 │   │   ├── tool_loop.ex        # Tool-calling loop (current escript logic)
 │   │   ├── llm_client.ex       # HTTP client for LLM APIs
-│   │   └── skill_runner.ex     # Shell-out to skill scripts
+│   │   └── tool_runner.ex      # Shell-out to tool scripts
 │   └── shellclaw.ex            # Public API
 └── config/
     └── config.exs              # Elixir config (reads from shellclaw.env)
@@ -451,14 +451,14 @@ This is the "Its Just Beam" tier — supervision trees, fault tolerance, message
 
 ### Testing All Three Backends
 
-Each backend gets tested against the same skill set and the same expected behavior:
+Each backend gets tested against the same tool set and the same expected behavior:
 
 ```bash
 # test/test_tool_loop/common_tests.sh — shared test cases
 
 # Test 1: Single tool call, simple string arg
-# Input: "What's the weather?" with weather.sh skill
-# Expected: LLM requests weather tool → skill executes → result fed back → final text
+# Input: "What's the weather?" with weather.sh tool
+# Expected: LLM requests weather tool → tool executes → result fed back → final text
 
 # Test 2: No tool call needed
 # Input: "Hello" with tools available
@@ -480,7 +480,7 @@ SHELLCLAW_TOOL_BACKEND=llm    ./test/test_tool_loop/run.sh
 SHELLCLAW_TOOL_BACKEND=elixir ./test/test_tool_loop/run.sh
 ```
 
-Stub skills return deterministic output, so tests are pure and reproducible regardless of backend.
+Stub tools return deterministic output, so tests are pure and reproducible regardless of backend.
 
 ---
 
@@ -543,7 +543,17 @@ shellclaw (entry point: filter + subcommands)
 - Subcommands: `init`, `config`, `session`, `reset`, `help`
 - The entry point is a thin composition of the libraries — the libraries are the real deliverable
 
-### Phase 5: Tool-Calling Backends
+### Phase 5: Tool Interface Specification
+- `docs/TOOL_INTERFACE.md` — the `--describe` convention spec
+- `tools/*` — 3 example tools (get_weather, disk_usage, github_issue)
+- `lib/discover.sh` — tool catalog discovery (discover_tools, discover_tool)
+- `lib/dispatch.sh` — tool execution + validation (dispatch_tool, validate_tool_call)
+- `lib/compose.sh` — extended with context module loading
+- `agents/default/context/example.md` — example context module
+- `config/shellclaw.env` — add SHELLCLAW_TOOLS_DIR
+- See `docs/PHASE5_SPEC.md` for the full specification
+
+### Phase 6: Tool-Calling Backends
 - Implement common interface contract (`tool_loop`)
 - Backend 1: bash (curl + jq)
 - Backend 2: llm CLI (--tools)
@@ -553,7 +563,7 @@ shellclaw (entry point: filter + subcommands)
 - Script-driven vs. LLM-driven is a flag, not architecture — same infrastructure, different policy
 - Both modes use the same logging, session, and config primitives
 
-### Phase 6: Polish
+### Phase 7: Polish
 - Run shellcheck on all scripts
 - Ensure filter mode composes in pipelines (test with real pipe chains)
 - Write docs/FUTURE.md (everything marked TODO)
@@ -566,7 +576,7 @@ These features are explicitly deferred and will be documented in `docs/FUTURE.md
 
 | Feature | Why deferred | Complexity to add later |
 |---|---|---|
-| Skills system | Requires tool calling to be useful | Medium |
+| ~~Tool interface~~ | ~~Phase 5 (done)~~ | ~~Done~~ |
 | Session compaction | Needed for long conversations | Medium — LLM-based summary |
 | Multi-agent coordination | Beyond v2 scope | High — Elixir tier |
 | Memory (persistent notes) | Not needed for basic primitives | Low |

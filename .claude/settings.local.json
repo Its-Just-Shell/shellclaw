@@ -3,7 +3,8 @@
     "allow": [
       "Bash(shellcheck:*)",
       "Bash(bash:*)",
-      "Bash(gh repo create:*)"
+      "Bash(gh repo create:*)",
+      "Bash(tools/get_weather.sh:*)"
     ]
   }
 }

@@ -104,6 +104,7 @@ SHELLCLAW_MODEL="claude-sonnet-4-5-20250929"
 SHELLCLAW_DEFAULT_AGENT="default"
 SHELLCLAW_TOOL_BACKEND="bash"
 SHELLCLAW_LLM_BACKEND="llm"
+SHELLCLAW_TOOLS_DIR="tools"
 ENV
     fi
 
@@ -140,6 +141,7 @@ _shellclaw_config() {
     echo "SHELLCLAW_DEFAULT_AGENT=$(config_get SHELLCLAW_DEFAULT_AGENT)"
     echo "SHELLCLAW_TOOL_BACKEND=$(config_get SHELLCLAW_TOOL_BACKEND)"
     echo "SHELLCLAW_LLM_BACKEND=$(config_get SHELLCLAW_LLM_BACKEND)"
+    echo "SHELLCLAW_TOOLS_DIR=$(config_get SHELLCLAW_TOOLS_DIR)"
 }
 
 # --- Subcommand: session ---

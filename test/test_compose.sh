@@ -90,4 +90,91 @@ output=$(compose_system "$TEST_TMPDIR/agents/nonexistent" 2>&1) && rc=0 || rc=$?
 check_exit "$rc" 1 "fails when agent dir doesn't exist"
 check_contains "$output" "not found" "error mentions not found"
 
+# --- compose_system: with context modules ---
+
+mkdir -p "$TEST_TMPDIR/agents/ctx/context"
+echo "Soul content here." > "$TEST_TMPDIR/agents/ctx/soul.md"
+echo "Domain knowledge." > "$TEST_TMPDIR/agents/ctx/context/domain.md"
+
+output=$(compose_system "$TEST_TMPDIR/agents/ctx") && rc=0 || rc=$?
+check_exit "$rc" 0 "returns 0 with context modules"
+check_contains "$output" "Soul content here." "includes soul.md"
+check_contains "$output" "Domain knowledge." "includes context module"
+
+# --- compose_system: context modules separated by --- ---
+
+check_contains "$output" "---" "context module separated by ---"
+
+# --- compose_system: alphabetical ordering ---
+
+mkdir -p "$TEST_TMPDIR/agents/order/context"
+echo "Order soul." > "$TEST_TMPDIR/agents/order/soul.md"
+echo "SECOND MODULE" > "$TEST_TMPDIR/agents/order/context/02-second.md"
+echo "FIRST MODULE" > "$TEST_TMPDIR/agents/order/context/01-first.md"
+
+output=$(compose_system "$TEST_TMPDIR/agents/order")
+# FIRST MODULE should appear before SECOND MODULE in the output.
+# Extract positions: if first appears earlier, the grep -n line number is lower.
+first_pos=$(printf '%s\n' "$output" | grep -n "FIRST MODULE" | head -1 | cut -d: -f1)
+second_pos=$(printf '%s\n' "$output" | grep -n "SECOND MODULE" | head -1 | cut -d: -f1)
+if [[ "$first_pos" -lt "$second_pos" ]]; then first_before_second="yes"; else first_before_second="no"; fi
+check_output "$first_before_second" "yes" "01-first loaded before 02-second"
+
+# --- compose_system: no context directory (regression) ---
+
+mkdir -p "$TEST_TMPDIR/agents/no-ctx"
+echo "Just soul." > "$TEST_TMPDIR/agents/no-ctx/soul.md"
+
+output=$(compose_system "$TEST_TMPDIR/agents/no-ctx") && rc=0 || rc=$?
+check_exit "$rc" 0 "works without context directory"
+check_output "$output" "Just soul." "outputs only soul.md without context dir"
+
+# --- compose_system: empty context directory ---
+
+mkdir -p "$TEST_TMPDIR/agents/empty-ctx/context"
+echo "Soul only." > "$TEST_TMPDIR/agents/empty-ctx/soul.md"
+
+output=$(compose_system "$TEST_TMPDIR/agents/empty-ctx") && rc=0 || rc=$?
+check_exit "$rc" 0 "works with empty context directory"
+check_output "$output" "Soul only." "empty context dir produces only soul.md"
+
+# --- compose_system: multiple context modules ---
+
+mkdir -p "$TEST_TMPDIR/agents/multi/context"
+echo "Multi soul." > "$TEST_TMPDIR/agents/multi/soul.md"
+echo "Module A." > "$TEST_TMPDIR/agents/multi/context/a.md"
+echo "Module B." > "$TEST_TMPDIR/agents/multi/context/b.md"
+echo "Module C." > "$TEST_TMPDIR/agents/multi/context/c.md"
+
+output=$(compose_system "$TEST_TMPDIR/agents/multi")
+check_contains "$output" "Module A." "includes first module"
+check_contains "$output" "Module B." "includes second module"
+check_contains "$output" "Module C." "includes third module"
+
+# --- compose_system: non-md files in context/ ignored ---
+
+mkdir -p "$TEST_TMPDIR/agents/non-md/context"
+echo "NM soul." > "$TEST_TMPDIR/agents/non-md/soul.md"
+echo "Should be loaded." > "$TEST_TMPDIR/agents/non-md/context/valid.md"
+echo "Should be ignored." > "$TEST_TMPDIR/agents/non-md/context/notes.txt"
+
+output=$(compose_system "$TEST_TMPDIR/agents/non-md")
+check_contains "$output" "Should be loaded." "loads .md files"
+
+# Check that .txt content is NOT in the output
+if [[ "$output" == *"Should be ignored."* ]]; then
+    _test_start "non-md files ignored"
+    _test_fail ".txt file was included"
+else
+    _test_start "non-md files ignored"
+    _test_pass
+fi
+
+# --- compose_system: real default agent with context module ---
+
+output=$(compose_system "$PROJECT_ROOT/agents/default") && rc=0 || rc=$?
+check_exit "$rc" 0 "real default agent with context modules"
+check_contains "$output" "shellclaw" "soul content present"
+check_contains "$output" "Context Module" "context module present"
+
 summary "compose.sh"
