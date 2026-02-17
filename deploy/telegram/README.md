@@ -2,6 +2,11 @@
 
 A real Telegram bot built by composing shellclaw's five core libraries. Proves the thesis isn't academic — this is the same `chat-loop.sh` pattern with Telegram I/O instead of a terminal.
 
+## Prerequisites
+
+- `bash` >= 4.0, `jq` >= 1.6, `llm` CLI — see [root README](../../README.md#dependencies)
+- `llm` must have an API key configured (e.g. `llm keys set openai`). See [llm docs](https://llm.datasette.io/en/stable/setup.html) for details.
+
 ## Setup
 
 ### 1. Create a bot with BotFather

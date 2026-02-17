@@ -165,7 +165,7 @@ All tests use the stub backend — no network calls, no API keys.
 
 - `bash` >= 4.0 (macOS ships 3.2 — use Homebrew: `brew install bash`)
 - `jq` >= 1.6
-- `llm` CLI — [github.com/simonw/llm](https://github.com/simonw/llm) (`pip install llm`)
+- `llm` CLI — [github.com/simonw/llm](https://github.com/simonw/llm) (`pip install llm`). Configure an API key with `llm keys set openai` (or whichever provider you use).
 
 ## Further Reading
 
