@@ -2,5 +2,9 @@
   "default": {
     "soul": "agents/default/soul.md",
     "model": null
+  },
+  "telegram": {
+    "soul": "agents/telegram/soul.md",
+    "model": null
   }
 }

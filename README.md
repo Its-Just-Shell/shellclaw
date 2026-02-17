@@ -73,6 +73,11 @@ scripts/
   pipe-summarize.sh    Example orchestration: summarize piped input
   batch-files.sh       Example orchestration: process multiple files
   soul-swap.sh         Example orchestration: switch agent identity
+deploy/
+  telegram/            Telegram bot — polling loop composing all five libs
+    telegram-bot.sh    Main daemon script
+    lib/telegram.sh    Telegram API adapter (3 curl wrappers + stub)
+    README.md          Setup instructions
 docs/
   PLAN.md              Full architecture and build plan
   TOOL_INTERFACE.md    Tool self-description spec (--describe convention)
@@ -129,10 +134,25 @@ discover_tools tools/ | jq '.[].name'
 
 See [docs/TOOL_INTERFACE.md](docs/TOOL_INTERFACE.md) for the full spec.
 
+## Deployments
+
+The `deploy/` directory contains real, runnable services composed from the core libraries.
+
+### Telegram Bot
+
+A Telegram bot built entirely by sourcing the five core libs. Each chat gets isolated multi-turn via `llm --cid`:
+
+```bash
+export SHELLCLAW_TELEGRAM_TOKEN="your-token-from-botfather"
+./deploy/telegram/telegram-bot.sh
+```
+
+See [deploy/telegram/README.md](deploy/telegram/README.md) for full setup instructions.
+
 ## Tests
 
 ```bash
-# Run the full suite (295 tests, all offline, no API keys needed)
+# Run the full suite (330 tests, all offline, no API keys needed)
 ./test/run_all.sh
 
 # Run a single test file
